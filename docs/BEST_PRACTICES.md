@@ -1,4 +1,349 @@
+# SDKLogger - Best Practices
+
+This guide covers production-ready patterns, performance optimization, and enterprise deployment strategies for SDKLogger.
+
+## 📚 Table of Contents
+
+- [🏭 Production Deployment](#-production-deployment)
+- [⚡ Performance Optimization](#-performance-optimization)
+- [🔒 Security Guidelines](#-security-guidelines)
+- [🚨 Error Handling Patterns](#-error-handling-patterns)
+- [📊 Monitoring & Alerting](#-monitoring--alerting)
+- [🧠 Memory Management](#-memory-management)
+- [🏗️ SDK Integration Patterns](#️-sdk-integration-patterns)
+- [🧪 Testing Strategies](#-testing-strategies)
+- [📋 Compliance & Privacy](#-compliance--privacy)
+- [🎯 Continuous Improvement](#-continuous-improvement)
+
+---
+
+## 🏭 Production Deployment
+
+### Environment-Based Configuration
+
+Create different logger configurations for different build environments to ensure optimal performance and security.
+
+```kotlin
+object LoggerFactory {
+    fun createLogger(context: Context, sdkName: String, version: String): SDKLogger {
+        return when (BuildConfig.BUILD_TYPE) {
+            "debug" -> createDebugLogger(context, sdkName, version)
+            "staging" -> createStagingLogger(context, sdkName, version)
+            "release" -> createProductionLogger(context, sdkName, version)
+            else -> createDefaultLogger(sdkName, version)
+        }
+    }
+    
+    private fun createDebugLogger(context: Context, sdkName: String, version: String): SDKLogger {
+        val config = SDKLoggerConfig.Builder()
+            .setEnabled(true)
+            .setMinLogLevel(LogLevel.VERBOSE)
+            .addDestination(ConsoleDestination())
+            .addDestination(FileDestination(
+                logDirectory = File(context.getExternalFilesDir(null), "debug_logs"),
+                baseFileName = sdkName.lowercase(),
+                formatter = JsonLogFormatter()
+            ))
+            .setAsync(false) // Synchronous for easier debugging
+            .setMetadataCollection(true)
+            .setStackTrace(true)
+            .build()
+            
+        return SDKLogger.getInstance(sdkName, version, config)
+    }
+    
+    private fun createStagingLogger(context: Context, sdkName: String, version: String): SDKLogger {
+        val config = SDKLoggerConfig.Builder()
+            .setEnabled(true)
+            .setMinLogLevel(LogLevel.INFO)
+            .addDestination(ConsoleDestination())
+            .addDestination(FileDestination(
+                logDirectory = File(context.getExternalFilesDir(null), "staging_logs"),
+                baseFileName = sdkName.lowercase(),
+                maxFileSize = 5 * 1024 * 1024L, // 5MB
+                maxFiles = 3
+            ))
+            .setAsync(true)
+            .setBufferSize(100)
+            .setFlushInterval(10000L)
+            .build()
+            
+        return SDKLogger.getInstance(sdkName, version, config)
+    }
+    
+    private fun createProductionLogger(context: Context, sdkName: String, version: String): SDKLogger {
+        val config = SDKLoggerConfig.Builder()
+            .setEnabled(isLoggingEnabledForUser()) // Selective enablement
+            .setMinLogLevel(LogLevel.WARNING) // Only warnings and errors
+            .addDestination(ConsoleDestination())
+            .apply {
+                // File logging only for specific users or error scenarios
+                if (shouldEnableFileLogging()) {
+                    addDestination(createProductionFileDestination(context, sdkName))
+                }
+                
+                // Network logging for critical errors
+                if (shouldEnableNetworkLogging()) {
+                    addDestination(createNetworkDestination())
+                }
+            }
+            .addInterceptor(SensitiveDataInterceptor())
+            .addInterceptor(ProductionFilterInterceptor())
+            .setAsync(true)
+            .setBufferSize(50) // Smaller buffer for production
+            .setFlushInterval(30000L) // 30 seconds
+            .setMaxLogFileSize(3 * 1024 * 1024L) // 3MB
+            .setMaxLogFiles(2) // Keep only 2 files
+            .build()
+            
+        return SDKLogger.getInstance(sdkName, version, config)
+    }
+    
+    private fun isLoggingEnabledForUser(): Boolean {
+        // Enable logging for beta users or internal testing
+        return BuildConfig.DEBUG || isInternalUser() || isBetaUser()
+    }
+    
+    private fun shouldEnableFileLogging(): Boolean {
+        // Enable file logging for specific scenarios
+        return BuildConfig.DEBUG || hasUserOptedIntoLogging()
+    }
+    
+    private fun shouldEnableNetworkLogging(): Boolean {
+        // Enable network logging for crash reporting
+        return isCrashReportingEnabled()
+    }
+}
+```
+
+### Feature Flags Integration
+
+Use feature flags to control logging behavior without app updates:
+
+```kotlin
+class FeatureFlaggedLogger {
+    private val logger: SDKLogger
+    private val featureFlags: FeatureFlags
+    
+    init {
+        val config = SDKLoggerConfig.Builder()
+            .setEnabled(featureFlags.isEnabled("sdk_logging"))
+            .setMinLogLevel(
+                if (featureFlags.isEnabled("verbose_logging")) LogLevel.DEBUG 
+                else LogLevel.INFO
+            )
+            .addDestination(ConsoleDestination())
+            .apply {
+                if (featureFlags.isEnabled("file_logging")) {
+                    addDestination(createFileDestination())
+                }
+                if (featureFlags.isEnabled("analytics_logging")) {
+                    addDestination(createAnalyticsDestination())
+                }
+            }
+            .build()
+            
+        logger = SDKLogger.getInstance("FeatureFlaggedSDK", "1.0.0", config)
+    }
+    
+    fun updateFromFeatureFlags() {
+        // Update configuration when feature flags change
+        val newConfig = buildConfigFromFeatureFlags()
+        GlobalScope.launch {
+            logger.updateConfig(newConfig)
+        }
+    }
+    
+    private fun buildConfigFromFeatureFlags(): SDKLoggerConfig {
+        return SDKLoggerConfig.Builder()
+            .setEnabled(featureFlags.isEnabled("sdk_logging"))
+            .setMinLogLevel(
+                if (featureFlags.isEnabled("verbose_logging")) LogLevel.DEBUG 
+                else LogLevel.INFO
+            )
+            .apply {
+                if (featureFlags.isEnabled("file_logging")) {
+                    addDestination(createFileDestination())
+                }
+            }
+            .build()
+    }
+}
+```
+
+### Gradual Rollout Strategy
+
+Implement gradual rollout to minimize risk when deploying new logging features:
+
+```kotlin
+class GradualRolloutLogger {
+    companion object {
+        fun createWithRollout(
+            context: Context, 
+            userId: String, 
+            sdkName: String
+        ): SDKLogger {
+            val rolloutPercentage = getRolloutPercentage(sdkName)
+            val userHash = userId.hashCode().absoluteValue % 100
+            val isInRollout = userHash < rolloutPercentage
+            
+            val config = SDKLoggerConfig.Builder()
+                .setEnabled(isInRollout || BuildConfig.DEBUG)
+                .setMinLogLevel(if (isInRollout) LogLevel.INFO else LogLevel.ERROR)
+                .addDestination(ConsoleDestination())
+                .apply {
+                    if (isInRollout) {
+                        addDestination(createRolloutFileDestination(context, sdkName))
+                    }
+                }
+                .build()
+                
+            return SDKLogger.getInstance(sdkName, "1.0.0", config)
+        }
+        
+        private fun getRolloutPercentage(sdkName: String): Int {
+            // Get rollout percentage from remote config or feature flags
+            return when (sdkName) {
+                "PaymentSDK" -> 10  // 10% rollout
+                "AuthSDK" -> 25     // 25% rollout
+                "AnalyticsSDK" -> 50 // 50% rollout
+                else -> 5           // 5% default rollout
+            }
+        }
+        
+        private fun createRolloutFileDestination(context: Context, sdkName: String): FileDestination {
+            return FileDestination(
+                logDirectory = File(context.getExternalFilesDir(null), "rollout_logs"),
+                baseFileName = "${sdkName.lowercase()}_rollout",
+                maxFileSize = 2 * 1024 * 1024L, // 2MB for rollout
+                maxFiles = 2
+            )
+        }
+    }
+}
+```
+
+---
+
+## ⚡ Performance Optimization
+
+### High-Volume Logging
+
+For applications that generate large volumes of logs, implement batching and optimize buffer settings:
+
+```kotlin
+class HighVolumeLogger {
+    private val logger: SDKLogger
+    
+    init {
+        val config = SDKLoggerConfig.Builder()
+            .setAsync(true)
+            .setBufferSize(1000) // Large buffer
+            .setFlushInterval(60000L) // Flush every minute
+            .setMinLogLevel(LogLevel.INFO) // Skip debug/verbose
+            .addDestination(ConsoleDestination())
+            .addDestination(FileDestination(
+                logDirectory = getHighVolumeLogDirectory(),
+                maxFileSize = 50 * 1024 * 1024L, // 50MB files
+                maxFiles = 10,
+                formatter = JsonLogFormatter()
+            ))
+            .build()
+            
+        logger = SDKLogger.getInstance("HighVolumeSDK", "1.0.0", config)
+    }
+    
+    // Batch similar events
+    private val eventBatch = mutableListOf<Event>()
+    private val batchLock = Mutex()
+    
+    suspend fun logEventBatch(event: Event) = batchLock.withLock {
+        eventBatch.add(event)
+        
+        if (eventBatch.size >= 50) {
+            flushEventBatch()
+        }
+    }
+    
+    private suspend fun flushEventBatch() {
+        if (eventBatch.isEmpty()) return
+        
+        val batch = eventBatch.toList()
+        eventBatch.clear()
+        
+        logger.info("Events", "Batch processed",
+            metadata = mapOf(
+                "eventCount" to batch.size,
+                "eventTypes" to batch.groupingBy { it.type }.eachCount(),
+                "timespan" to (batch.last().timestamp - batch.first().timestamp)
+            ))
+    }
+    
+    private fun getHighVolumeLogDirectory(): File {
+        return File(context.getExternalFilesDir(null), "high_volume_logs")
+    }
+}
+
+data class Event(
+    val type: String,
+    val timestamp: Long,
+    val data: Map<String, Any>
+)
+```
+
+### Memory-Efficient Logging
+
+Implement safeguards to prevent memory issues from large metadata or log messages:
+
+```kotlin
+class MemoryEfficientLogger {
+    private val logger = SDKLogger.getInstance("MemorySDK", "1.0.0")
+    
+    // Limit metadata size to prevent memory issues
+    fun logWithSafeMetadata(tag: String, message: String, metadata: Map<String, Any>) {
+        val safeMetadata = metadata.entries
+            .take(MAX_METADATA_ENTRIES) // Limit number of entries
+            .associate { (key, value) ->
+                key to limitValueSize(value)
+            }
+        
+        logger.info(tag, message, metadata = safeMetadata)
+    }
+    
+    private fun limitValueSize(value: Any): Any {
+        return when (value) {
+            is String -> if (value.length > MAX_STRING_LENGTH) {
+                value.take(MAX_STRING_LENGTH) + "..."
+            } else value
+            
+            is Collection<*> -> if (value.size > MAX_COLLECTION_SIZE) {
+                value.take(MAX_COLLECTION_SIZE).toList() + listOf("... ${value.size - MAX_COLLECTION_SIZE} more")
+            } else value
+            
+            is ByteArray -> if (value.size > MAX_BYTE_ARRAY_SIZE) {
+                mapOf(
+                    "size" to value.size,
+                    "hash" to value.contentHashCode(),
+                    "preview" to value.take(10).toString()
+                )
+            } else value
+            
+            else -> value
+        }
+    }
+    
+    companion object {
+        private const val MAX_METADATA_ENTRIES = 20
+        private const val MAX_STRING_LENGTH = 500
+        private const val MAX_COLLECTION_SIZE = 10
+        private const val MAX_BYTE_ARRAY_SIZE = 1024
+    }
+}
+```
+
 ### CPU-Optimized Logging
+
+Optimize CPU usage with lazy evaluation and object pooling:
 
 ```kotlin
 class CPUOptimizedLogger {
@@ -48,6 +393,8 @@ class CPUOptimizedLogger {
 
 ### Sensitive Data Protection
 
+Implement comprehensive data sanitization to protect user privacy:
+
 ```kotlin
 class SecureLogger {
     private val logger: SDKLogger
@@ -65,17 +412,23 @@ class SecureLogger {
             
         logger = SDKLogger.getInstance("SecureSDK", "1.0.0", config)
     }
+    
+    private fun getSecureLogDirectory(): File {
+        // Use internal storage for better security
+        return File(context.filesDir, "secure_logs")
+    }
 }
 
 class SecurityInterceptor : LogInterceptor {
     private val sensitiveKeys = setOf(
         "password", "token", "secret", "key", "auth", "credential",
-        "ssn", "social", "credit", "card", "pin", "cvv"
+        "ssn", "social", "credit", "card", "pin", "cvv", "api_key"
     )
     
     private val creditCardRegex = Regex("\\b\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b")
     private val ssnRegex = Regex("\\b\\d{3}-\\d{2}-\\d{4}\\b")
     private val emailRegex = Regex("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b")
+    private val phoneRegex = Regex("\\b\\+?\\d{1,3}[\\s-]?\\d{3}[\\s-]?\\d{3}[\\s-]?\\d{4}\\b")
     
     override suspend fun intercept(logEntry: LogEntry): LogEntry? {
         val sanitizedMessage = sanitizeString(logEntry.message)
@@ -91,6 +444,7 @@ class SecurityInterceptor : LogInterceptor {
         return input
             .replace(creditCardRegex, "****-****-****-****")
             .replace(ssnRegex, "***-**-****")
+            .replace(phoneRegex, "***-***-****")
             .replace(emailRegex) { matchResult ->
                 val email = matchResult.value
                 val atIndex = email.indexOf('@')
@@ -123,6 +477,8 @@ class SecurityInterceptor : LogInterceptor {
 ```
 
 ### Access Control
+
+Implement role-based access control for logging:
 
 ```kotlin
 class AccessControlledLogger {
@@ -165,46 +521,26 @@ enum class Permission {
     SYSTEM_LOGGING,
     DEBUG_LOGGING
 }
-```
 
-### Log Encryption
-
-```kotlin
-class EncryptedFileDestination(
-    private val logDirectory: File,
-    private val encryptionKey: String
-) : LogDestination {
-    
-    private val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-    private val secretKey = generateSecretKey(encryptionKey)
-    
-    override suspend fun writeLog(logEntry: LogEntry) {
-        val plaintext = JsonLogFormatter().format(logEntry)
-        val encrypted = encrypt(plaintext)
-        
-        val logFile = File(logDirectory, "encrypted_logs.dat")
-        logFile.appendBytes(encrypted)
+class AccessChecker {
+    fun hasPermission(permission: Permission): Boolean {
+        return when (permission) {
+            Permission.BASIC_LOGGING -> true
+            Permission.SENSITIVE_DATA_LOGGING -> isAuthorizedUser()
+            Permission.SYSTEM_LOGGING -> isSystemUser()
+            Permission.DEBUG_LOGGING -> BuildConfig.DEBUG
+        }
     }
     
-    private fun encrypt(plaintext: String): ByteArray {
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-        val iv = cipher.iv
-        val ciphertext = cipher.doFinal(plaintext.toByteArray())
-        
-        // Prepend IV to ciphertext
-        return iv + ciphertext
+    private fun isAuthorizedUser(): Boolean {
+        // Check if user has permission to log sensitive data
+        return getCurrentUser().hasRole("DATA_ACCESS")
     }
     
-    private fun generateSecretKey(password: String): SecretKey {
-        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val spec = PBEKeySpec(password.toCharArray(), "salt".toByteArray(), 100000, 256)
-        val tmp = factory.generateSecret(spec)
-        return SecretKeySpec(tmp.encoded, "AES")
+    private fun isSystemUser(): Boolean {
+        // Check if this is a system-level operation
+        return getCurrentUser().hasRole("SYSTEM_ADMIN")
     }
-    
-    override suspend fun flush() { /* Implementation */ }
-    override suspend fun close() { /* Implementation */ }
-    override fun getName(): String = "EncryptedFile"
 }
 ```
 
@@ -213,6 +549,8 @@ class EncryptedFileDestination(
 ## 🚨 Error Handling Patterns
 
 ### Resilient Error Logging
+
+Implement comprehensive error handling that provides context and recovery suggestions:
 
 ```kotlin
 class ResilientErrorLogger {
@@ -280,6 +618,11 @@ class ResilientErrorLogger {
             else -> ErrorClassification.UNKNOWN
         }
     }
+    
+    private fun sendToCrashlytics(error: Throwable, metadata: Map<String, Any>) {
+        // Implementation for crash reporting service integration
+        // Example: Firebase Crashlytics, Bugsnag, etc.
+    }
 }
 
 data class ErrorContext(
@@ -308,6 +651,8 @@ enum class ErrorSeverity { LOW, MEDIUM, HIGH, CRITICAL }
 ```
 
 ### Circuit Breaker Pattern
+
+Implement circuit breaker pattern to prevent logging system failures from affecting the main application:
 
 ```kotlin
 class CircuitBreakerLogger {
@@ -406,6 +751,8 @@ class CircuitBreaker {
 
 ### Production Health Monitoring
 
+Implement comprehensive health monitoring for production environments:
+
 ```kotlin
 class ProductionHealthMonitor {
     private val analytics = LogAnalytics()
@@ -441,7 +788,7 @@ class ProductionHealthMonitor {
         if (recentErrorRate > 0.1) { // More than 10% errors
             alertManager.sendCriticalAlert(
                 "High Error Rate",
-                "Error rate: ${(recentErrorRate * 100).format(1)}% in the last minute",
+                "Error rate: ${String.format("%.1f", recentErrorRate * 100)}% in the last minute",
                 mapOf("errorRate" to recentErrorRate, "timeWindow" to "1 minute")
             )
         }
@@ -451,7 +798,7 @@ class ProductionHealthMonitor {
         if (memoryUsage > 0.9) { // More than 90% memory usage
             alertManager.sendWarningAlert(
                 "High Memory Usage",
-                "Memory usage: ${(memoryUsage * 100).format(1)}%",
+                "Memory usage: ${String.format("%.1f", memoryUsage * 100)}%",
                 mapOf("memoryUsage" to memoryUsage)
             )
         }
@@ -518,99 +865,162 @@ class ProductionHealthMonitor {
                 "summary" to report.executiveSummary
             ))
     }
+    
+    private fun calculateRecentErrorRate(stats: Map<String, Any>, since: Long): Double {
+        // Implementation to calculate error rate for recent time window
+        return 
+```
+
+---
+## 🧠 Memory Management
+
+### Memory-Conscious Configuration
+
+Configure logging based on available memory and device capabilities:
+
+```kotlin
+class MemoryOptimizedConfig {
+    companion object {
+        fun createOptimalConfig(context: Context): SDKLoggerConfig {
+            val memoryClass = getMemoryClass(context)
+            
+            return when {
+                memoryClass >= 512 -> createHighMemoryConfig(context)
+                memoryClass >= 256 -> createMediumMemoryConfig(context)
+                else -> createLowMemoryConfig(context)
+            }
+        }
+        
+        private fun createLowMemoryConfig(context: Context): SDKLoggerConfig {
+            return SDKLoggerConfig.Builder()
+                .setBufferSize(25) // Small buffer
+                .setFlushInterval(5000L) // Frequent flushes
+                .setMaxLogFileSize(1 * 1024 * 1024L) // 1MB files
+                .setMaxLogFiles(2) // Keep only 2 files
+                .setMetadataCollection(false) // Disable metadata
+                .setStackTrace(false) // Disable stack traces
+                .addDestination(ConsoleDestination())
+                .build()
+        }
+        
+        private fun createMediumMemoryConfig(context: Context): SDKLoggerConfig {
+            return SDKLoggerConfig.Builder()
+                .setBufferSize(100) // Medium buffer
+                .setFlushInterval(10000L) // Moderate flush interval
+                .setMaxLogFileSize(5 * 1024 * 1024L) // 5MB files
+                .setMaxLogFiles(3) // Keep 3 files
+                .setMetadataCollection(true)
+                .setStackTrace(false) // Limited stack traces
+                .addDestination(ConsoleDestination())
+                .addDestination(FileDestination(
+                    logDirectory = File(context.getExternalFilesDir(null), "logs")
+                ))
+                .build()
+        }
+        
+        private fun createHighMemoryConfig(context: Context): SDKLoggerConfig {
+            return SDKLoggerConfig.Builder()
+                .setBufferSize(500) // Large buffer
+                .setFlushInterval(30000L) // Less frequent flushes
+                .setMaxLogFileSize(50 * 1024 * 1024L) // 50MB files
+                .setMaxLogFiles(10) // Keep 10 files
+                .setMetadataCollection(true)
+                .setStackTrace(true)
+                .addDestination(ConsoleDestination())
+                .addDestination(FileDestination(
+                    logDirectory = File(context.getExternalFilesDir(null), "logs")
+                ))
+                .build()
+        }
+        
+        private fun getMemoryClass(context: Context): Int {
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            return activityManager.memoryClass
+        }
+    }
 }
 ```
 
-### Alert Management
+---
+
+## 🏗️ SDK Integration Patterns
+
+### Microservices Architecture
+
+Implement logging for microservices with correlation IDs and distributed tracing:
 
 ```kotlin
-class AlertManager {
-    private val logger = SDKLogger.getInstance("AlertManager", "1.0.0")
-    private val rateLimiter = RateLimiter()
-    
-    fun sendCriticalAlert(title: String, message: String, metadata: Map<String, Any>) {
-        if (rateLimiter.shouldSendAlert(AlertLevel.CRITICAL, title)) {
-            logger.assert("Alert", "CRITICAL: $title - $message", metadata = metadata)
-            
-            // Send to multiple channels
-            sendToSlack(AlertLevel.CRITICAL, title, message, metadata)
-            sendToPagerDuty(AlertLevel.CRITICAL, title, message, metadata)
-            sendToEmail(AlertLevel.CRITICAL, title, message, metadata)
-        } else {
-            logger.warning("Alert", "Critical alert rate limited: $title")
+class MicroserviceLogger {
+    companion object {
+        fun create(serviceName: String, context: Context): SDKLogger {
+            val config = SDKLoggerConfig.Builder()
+                .addDestination(ConsoleDestination())
+                .addDestination(FileDestination(
+                    logDirectory = File(context.getExternalFilesDir(null), "microservices"),
+                    baseFileName = serviceName.lowercase()
+                ))
+                .addInterceptor(CorrelationIdInterceptor())
+                .addInterceptor(ServiceContextInterceptor(serviceName))
+                .build()
+                
+            return SDKLogger.getInstance(serviceName, BuildConfig.VERSION_NAME, config)
         }
-    }
-    
-    fun sendWarningAlert(title: String, message: String, metadata: Map<String, Any>) {
-        if (rateLimiter.shouldSendAlert(AlertLevel.WARNING, title)) {
-            logger.warning("Alert", "WARNING: $title - $message", metadata = metadata)
-            
-            sendToSlack(AlertLevel.WARNING, title, message, metadata)
-        } else {
-            logger.info("Alert", "Warning alert rate limited: $title")
-        }
-    }
-    
-    private fun sendToSlack(level: AlertLevel, title: String, message: String, metadata: Map<String, Any>) {
-        // Implementation for Slack integration
-        logger.debug("Alert", "Sent to Slack: $level - $title")
-    }
-    
-    private fun sendToPagerDuty(level: AlertLevel, title: String, message: String, metadata: Map<String, Any>) {
-        // Implementation for PagerDuty integration
-        logger.debug("Alert", "Sent to PagerDuty: $level - $title")
     }
 }
 
-class RateLimiter {
-    private val alertHistory = mutableMapOf<String, MutableList<Long>>()
-    private val cleanupScheduler = Executors.newScheduledThreadPool(1)
+class CorrelationIdInterceptor : LogInterceptor {
+    private val correlationIdThreadLocal = ThreadLocal.withInitial { UUID.randomUUID().toString() }
     
-    init {
-        // Clean up old alerts every hour
-        cleanupScheduler.scheduleAtFixedRate({
-            cleanupOldAlerts()
-        }, 1, 1, TimeUnit.HOURS)
+    override suspend fun intercept(logEntry: LogEntry): LogEntry? {
+        val correlationId = correlationIdThreadLocal.get()
+        
+        return logEntry.copy(
+            metadata = logEntry.metadata + mapOf(
+                "correlationId" to correlationId,
+                "traceId" to getDistributedTraceId(),
+                "spanId" to getCurrentSpanId()
+            )
+        )
     }
     
-    fun shouldSendAlert(level: AlertLevel, alertKey: String): Boolean {
-        val now = System.currentTimeMillis()
-        val key = "${level.name}:$alertKey"
-        val history = alertHistory.getOrPut(key) { mutableListOf() }
-        
-        val timeWindow = when (level) {
-            AlertLevel.CRITICAL -> 5 * 60 * 1000L // 5 minutes
-            AlertLevel.WARNING -> 15 * 60 * 1000L // 15 minutes
-            AlertLevel.INFO -> 60 * 60 * 1000L // 1 hour
-        }
-        
-        val maxAlerts = when (level) {
-            AlertLevel.CRITICAL -> 3 // Max 3 critical alerts per 5 minutes
-            AlertLevel.WARNING -> 2  // Max 2 warning alerts per 15 minutes
-            AlertLevel.INFO -> 1     // Max 1 info alert per hour
-        }
-        
-        // Remove old alerts outside time window
-        history.removeAll { it < now - timeWindow }
-        
-        return if (history.size < maxAlerts) {
-            history.add(now)
-            true
-        } else {
-            false
-        }
+    private fun getDistributedTraceId(): String {
+        // Integration with distributed tracing system (Jaeger, Zipkin, etc.)
+        return MDC.get("traceId") ?: UUID.randomUUID().toString()
     }
     
-    private fun cleanupOldAlerts() {
-        val cutoffTime = System.currentTimeMillis() - 24 * 60 * 60 * 1000L // 24 hours
-        alertHistory.forEach { (key, history) ->
-            history.removeAll { it < cutoffTime }
-        }
-        alertHistory.entries.removeAll { it.value.isEmpty() }
+    private fun getCurrentSpanId(): String {
+        return MDC.get("spanId") ?: UUID.randomUUID().toString()
+    }
+    
+    fun setCorrelationId(correlationId: String) {
+        correlationIdThreadLocal.set(correlationId)
     }
 }
 
-enum class AlertLevel { INFO, WARNING, CRITICAL }
+class ServiceContextInterceptor(
+    private val serviceName: String
+) : LogInterceptor {
+    override suspend fun intercept(logEntry: LogEntry): LogEntry? {
+        val serviceContext = mapOf(
+            "serviceName" to serviceName,
+            "serviceVersion" to BuildConfig.VERSION_NAME,
+            "environment" to BuildConfig.BUILD_TYPE,
+            "instanceId" to getInstanceId(),
+            "nodeId" to getNodeId(),
+            "clusterId" to getClusterId(),
+            "region" to getRegion()
+        )
+        
+        return logEntry.copy(
+            metadata = logEntry.metadata + serviceContext
+        )
+    }
+    
+    private fun getInstanceId(): String = System.getProperty("instance.id") ?: "unknown"
+    private fun getNodeId(): String = System.getProperty("node.id") ?: "unknown"
+    private fun getClusterId(): String = System.getProperty("cluster.id") ?: "unknown"
+    private fun getRegion(): String = System.getProperty("region") ?: "unknown"
+}
 ```
 
 ---
@@ -619,33 +1029,56 @@ enum class AlertLevel { INFO, WARNING, CRITICAL }
 
 ### Unit Testing Logger Configuration
 
+Create comprehensive tests for different logger configurations:
+
 ```kotlin
 class LoggerConfigurationTest {
+    private lateinit var context: Context
     
-    @Test
-    fun `test debug configuration`() {
-        val config = LoggerFactory.createDebugConfig(context)
-        
-        assertTrue(config.isEnabled)
-        assertEquals(LogLevel.VERBOSE, config.minLogLevel)
-        assertTrue(config.enableAsync == false) // Synchronous for debugging
-        assertTrue(config.destinations.any { it is ConsoleDestination })
-        assertTrue(config.destinations.any { it is FileDestination })
+    @Before
+    fun setup() {
+        context = InstrumentationRegistry.getInstrumentation().targetContext
     }
     
     @Test
-    fun `test production configuration`() {
-        val config = LoggerFactory.createProductionConfig(context)
+    fun `test debug configuration creates verbose logging`() {
+        val logger = LoggerFactory.createDebugLogger(context, "TestSDK", "1.0.0")
+        val config = logger.getConfig()
         
-        assertEquals(LogLevel.WARNING, config.minLogLevel)
-        assertTrue(config.enableAsync)
-        assertTrue(config.interceptors.any { it is SensitiveDataInterceptor })
-        assertTrue(config.maxLogFileSize <= 5 * 1024 * 1024L) // Max 5MB
+        assertTrue("Debug logger should be enabled", config.isEnabled)
+        assertEquals("Debug logger should use VERBOSE level", LogLevel.VERBOSE, config.minLogLevel)
+        assertFalse("Debug logger should be synchronous", config.enableAsync)
+        assertTrue("Debug logger should collect metadata", config.enableMetadataCollection)
+        assertTrue("Debug logger should include stack traces", config.enableStackTrace)
+    }
+    
+    @Test
+    fun `test production configuration limits logging`() {
+        val logger = LoggerFactory.createProductionLogger(context, "TestSDK", "1.0.0")
+        val config = logger.getConfig()
+        
+        assertEquals("Production logger should use WARNING level", LogLevel.WARNING, config.minLogLevel)
+        assertTrue("Production logger should be async", config.enableAsync)
+        assertTrue("Production logger should have interceptors", config.interceptors.isNotEmpty())
+        assertTrue("Production logger should have small buffer", config.bufferSize <= 50)
+    }
+    
+    @Test
+    fun `test memory optimized configuration for low memory devices`() {
+        val config = MemoryOptimizedConfig.createLowMemoryConfig(context)
+        
+        assertEquals("Low memory config should have small buffer", 25, config.bufferSize)
+        assertEquals("Low memory config should have small files", 1 * 1024 * 1024L, config.maxLogFileSize)
+        assertEquals("Low memory config should keep few files", 2, config.maxLogFiles)
+        assertFalse("Low memory config should disable metadata", config.enableMetadataCollection)
+        assertFalse("Low memory config should disable stack traces", config.enableStackTrace)
     }
 }
 ```
 
 ### Integration Testing
+
+Test the complete logging pipeline:
 
 ```kotlin
 class LoggerIntegrationTest {
@@ -664,32 +1097,56 @@ class LoggerIntegrationTest {
     }
     
     @Test
-    fun `test log entry creation`() {
-        val metadata = mapOf("key1" to "value1", "key2" to 123)
+    fun `test log entry creation with metadata`() {
+        val metadata = mapOf("key1" to "value1", "key2" to 123, "key3" to true)
         testLogger.info("TestTag", "Test message", metadata = metadata)
         
         val logEntries = testDestination.getLogEntries()
-        assertEquals(1, logEntries.size)
+        assertEquals("Should have one log entry", 1, logEntries.size)
         
         val entry = logEntries.first()
-        assertEquals(LogLevel.INFO, entry.level)
-        assertEquals("TestTag", entry.tag)
-        assertEquals("Test message", entry.message)
-        assertEquals("TestSDK", entry.sdkName)
-        assertEquals(metadata, entry.metadata)
+        assertEquals("Log level should be INFO", LogLevel.INFO, entry.level)
+        assertEquals("Tag should match", "TestTag", entry.tag)
+        assertEquals("Message should match", "Test message", entry.message)
+        assertEquals("SDK name should match", "TestSDK", entry.sdkName)
+        assertEquals("Metadata should match", metadata, entry.metadata)
+        assertNotNull("Timestamp should be set", entry.timestamp)
+        assertNotNull("Thread name should be set", entry.threadName)
     }
     
     @Test
     fun `test error logging with exception`() {
         val exception = RuntimeException("Test exception")
-        testLogger.error("ErrorTag", "Error occurred", exception)
+        testLogger.error("ErrorTag", "Error occurred", exception,
+            metadata = mapOf("errorCode" to "TEST_001"))
         
         val logEntries = testDestination.getLogEntries()
         val entry = logEntries.first()
         
-        assertEquals(LogLevel.ERROR, entry.level)
-        assertEquals(exception, entry.throwable)
-        assertNotNull(entry.throwable?.stackTrace)
+        assertEquals("Log level should be ERROR", LogLevel.ERROR, entry.level)
+        assertEquals("Exception should be captured", exception, entry.throwable)
+        assertTrue("Metadata should include error code", 
+                  entry.metadata["errorCode"] == "TEST_001")
+    }
+    
+    @Test
+    fun `test interceptor chain execution`() {
+        val testInterceptor = TestInterceptor()
+        val config = SDKLoggerConfig.Builder()
+            .addDestination(testDestination)
+            .addInterceptor(testInterceptor)
+            .setAsync(false)
+            .build()
+            
+        val logger = SDKLogger.getInstance("InterceptorTestSDK", "1.0.0", config)
+        logger.info("Test", "Test message")
+        
+        assertTrue("Interceptor should have been called", testInterceptor.wasCalled)
+        
+        val logEntries = testDestination.getLogEntries()
+        val entry = logEntries.first()
+        assertTrue("Interceptor should have modified metadata", 
+                  entry.metadata.containsKey("intercepted"))
     }
 }
 
@@ -707,15 +1164,28 @@ class TestLogDestination : LogDestination {
     fun getLogEntries(): List<LogEntry> = logEntries.toList()
     fun clear() = logEntries.clear()
 }
+
+class TestInterceptor : LogInterceptor {
+    var wasCalled = false
+    
+    override suspend fun intercept(logEntry: LogEntry): LogEntry? {
+        wasCalled = true
+        return logEntry.copy(
+            metadata = logEntry.metadata + mapOf("intercepted" to true)
+        )
+    }
+}
 ```
 
 ### Performance Testing
+
+Measure and validate logging performance:
 
 ```kotlin
 class LoggerPerformanceTest {
     
     @Test
-    fun `test async logging performance`() {
+    fun `test async logging performance under load`() {
         val config = SDKLoggerConfig.Builder()
             .setAsync(true)
             .setBufferSize(1000)
@@ -729,17 +1199,25 @@ class LoggerPerformanceTest {
         
         repeat(logCount) { i ->
             logger.info("Performance", "Log message $i",
-                metadata = mapOf("index" to i, "timestamp" to System.currentTimeMillis()))
+                metadata = mapOf(
+                    "index" to i, 
+                    "timestamp" to System.currentTimeMillis(),
+                    "data" to "test_data_$i"
+                ))
         }
+        
+        // Flush to ensure all logs are processed
+        runBlocking { logger.flush() }
         
         val duration = System.currentTimeMillis() - startTime
         val logsPerSecond = (logCount.toDouble() / duration) * 1000
         
         println("Logged $logCount messages in ${duration}ms")
-        println("Performance: ${logsPerSecond.format(2)} logs/second")
+        println("Performance: ${String.format("%.2f", logsPerSecond)} logs/second")
         
-        // Assert performance is acceptable
-        assertTrue("Performance too slow: $logsPerSecond logs/second", logsPerSecond > 1000)
+        // Assert performance is acceptable (adjust threshold as needed)
+        assertTrue("Performance too slow: $logsPerSecond logs/second", 
+                  logsPerSecond > 1000)
     }
     
     @Test
@@ -748,23 +1226,29 @@ class LoggerPerformanceTest {
         
         val logger = SDKLogger.getInstance("MemoryTestSDK", "1.0.0")
         
+        // Generate large volume of logs
         repeat(50000) { i ->
             logger.info("Memory", "Memory test log $i",
-                metadata = mapOf("data" to "x".repeat(100))) // 100 char string
+                metadata = mapOf(
+                    "data" to "x".repeat(100), // 100 char string
+                    "index" to i,
+                    "timestamp" to System.currentTimeMillis()
+                ))
         }
         
-        // Force garbage collection
+        // Force garbage collection and measure
         System.gc()
         Thread.sleep(100)
         
         val finalMemory = getUsedMemory()
         val memoryIncrease = finalMemory - initialMemory
+        val memoryIncreaseMB = memoryIncrease / 1024 / 1024
         
-        println("Memory increase: ${memoryIncrease / 1024 / 1024}MB")
+        println("Memory increase: ${memoryIncreaseMB}MB")
         
-        // Assert memory increase is reasonable (less than 50MB)
-        assertTrue("Memory increase too high: ${memoryIncrease / 1024 / 1024}MB", 
-                  memoryIncrease < 50 * 1024 * 1024)
+        // Assert memory increase is reasonable (adjust threshold as needed)
+        assertTrue("Memory increase too high: ${memoryIncreaseMB}MB", 
+                  memoryIncreaseMB < 50)
     }
     
     private fun getUsedMemory(): Long {
@@ -779,6 +1263,8 @@ class LoggerPerformanceTest {
 ## 📋 Compliance & Privacy
 
 ### GDPR Compliance
+
+Implement GDPR-compliant logging with proper consent management:
 
 ```kotlin
 class GDPRCompliantLogger {
@@ -821,9 +1307,14 @@ class GDPRCompliantLogger {
     private fun isPersonalData(key: String): Boolean {
         val personalDataKeys = setOf(
             "userId", "email", "phone", "name", "address", 
-            "ip", "deviceId", "sessionId"
+            "ip", "deviceId", "sessionId", "location"
         )
         return personalDataKeys.any { key.contains(it, ignoreCase = true) }
+    }
+    
+    private fun getGDPRCompliantLogDirectory(): File {
+        // Use secure internal storage for GDPR compliance
+        return File(context.filesDir, "gdpr_logs")
     }
 }
 
@@ -836,12 +1327,17 @@ class GDPRInterceptor(
         
         return if (consentManager.hasLoggingConsent(userId)) {
             // User has given consent, log normally
-            logEntry
+            logEntry.copy(
+                metadata = logEntry.metadata + mapOf("gdprCompliant" to true)
+            )
         } else {
             // Remove personal data
             val sanitizedMetadata = logEntry.metadata.filterKeys { key ->
                 !isPersonalData(key)
-            } + mapOf("dataProcessingConsent" to false)
+            } + mapOf(
+                "dataProcessingConsent" to false,
+                "gdprCompliant" to true
+            )
             
             logEntry.copy(
                 metadata = sanitizedMetadata,
@@ -850,12 +1346,21 @@ class GDPRInterceptor(
         }
     }
     
+    private fun isPersonalData(key: String): Boolean {
+        val personalDataKeys = setOf(
+            "userId", "email", "phone", "name", "address", 
+            "ip", "deviceId", "sessionId", "location"
+        )
+        return personalDataKeys.any { key.contains(it, ignoreCase = true) }
+    }
+    
     private fun sanitizeMessage(message: String): String {
         // Remove potential personal identifiers from message
         return message
             .replace(Regex("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"), "[EMAIL]")
             .replace(Regex("\\b\\d{3}-\\d{3}-\\d{4}\\b"), "[PHONE]")
             .replace(Regex("\\buser_\\d+\\b"), "[USER_ID]")
+            .replace(Regex("\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b"), "[IP_ADDRESS]")
     }
 }
 
@@ -869,292 +1374,117 @@ class DataRetentionInterceptor : LogInterceptor {
         )
         
         return logEntry.copy(
-            metadata = logEntry.metadata +# SDKLogger - Best Practices
-
-This guide covers production-ready patterns, performance optimization, and enterprise deployment strategies for SDKLogger.
-
-## 📚 Table of Contents
-
-- [Production Deployment](#production-deployment)
-- [Performance Optimization](#performance-optimization)
-- [Security Guidelines](#security-guidelines)
-- [Error Handling Patterns](#error-handling-patterns)
-- [Monitoring & Alerting](#monitoring--alerting)
-- [Memory Management](#memory-management)
-- [SDK Integration Patterns](#sdk-integration-patterns)
-- [Testing Strategies](#testing-strategies)
-- [Compliance & Privacy](#compliance--privacy)
-
----
-
-## 🏭 Production Deployment
-
-### Environment-Based Configuration
-
-```kotlin
-object LoggerFactory {
-    fun createLogger(context: Context, sdkName: String, version: String): SDKLogger {
-        return when (BuildConfig.BUILD_TYPE) {
-            "debug" -> createDebugLogger(context, sdkName, version)
-            "staging" -> createStagingLogger(context, sdkName, version)
-            "release" -> createProductionLogger(context, sdkName, version)
-            else -> createDefaultLogger(sdkName, version)
+            metadata = logEntry.metadata + retentionMetadata
+        )
+    }
+    
+    private fun getRetentionPeriod(level: LogLevel): Int {
+        return when (level) {
+            LogLevel.ERROR, LogLevel.ASSERT -> 90 // Keep errors for 90 days
+            LogLevel.WARNING -> 30 // Keep warnings for 30 days
+            LogLevel.INFO -> 14 // Keep info for 14 days
+            LogLevel.DEBUG, LogLevel.VERBOSE -> 7 // Keep debug for 7 days
         }
     }
     
-    private fun createDebugLogger(context: Context, sdkName: String, version: String): SDKLogger {
-        val config = SDKLoggerConfig.Builder()
-            .setEnabled(true)
-            .setMinLogLevel(LogLevel.VERBOSE)
-            .addDestination(ConsoleDestination())
-            .addDestination(FileDestination(
-                logDirectory = File(context.getExternalFilesDir(null), "debug_logs"),
-                baseFileName = sdkName.lowercase(),
-                formatter = JsonLogFormatter()
-            ))
-            .setAsync(false) // Synchronous for easier debugging
+    private fun classifyData(logEntry: LogEntry): String {
+        val hasPersonalData = logEntry.metadata.keys.any { isPersonalData(it) }
+        return when {
+            hasPersonalData -> "PERSONAL_DATA"
+            logEntry.level in listOf(LogLevel.ERROR, LogLevel.ASSERT) -> "OPERATIONAL_DATA"
+            else -> "TECHNICAL_DATA"
+        }
+    }
+    
+    private fun calculateDeleteDate(level: LogLevel): Long {
+        val retentionDays = getRetentionPeriod(level)
+        return System.currentTimeMillis() + (retentionDays * 24 * 60 * 60 * 1000L)
+    }
+    
+    private fun isPersonalData(key: String): Boolean {
+        val personalDataKeys = setOf(
+            "userId", "email", "phone", "name", "address", 
+            "ip", "deviceId", "sessionId", "location"
+        )
+        return personalDataKeys.any { key.contains(it, ignoreCase = true) }
+    }
+}
+
+interface ConsentManager {
+    fun hasLoggingConsent(userId: String?): Boolean
+    fun recordConsentChange(userId: String, hasConsent: Boolean)
+}
+```
+
+---
+
+## 🎯 Continuous Improvement
+
+### A/B Testing for Logging
+
+Test different logging configurations to optimize performance and utility:
+
+```kotlin
+class ABTestingLogger {
+    private val loggerA: SDKLogger
+    private val loggerB: SDKLogger
+    private val experimentManager: ExperimentManager
+    
+    init {
+        // Configuration A: High verbosity, more metadata
+        val configA = SDKLoggerConfig.Builder()
+            .setMinLogLevel(LogLevel.DEBUG)
+            .setBufferSize(200)
+            .setFlushInterval(5000L)
             .setMetadataCollection(true)
             .setStackTrace(true)
             .build()
             
-        return SDKLogger.getInstance(sdkName, version, config)
-    }
-    
-    private fun createStagingLogger(context: Context, sdkName: String, version: String): SDKLogger {
-        val config = SDKLoggerConfig.Builder()
-            .setEnabled(true)
+        // Configuration B: Low verbosity, high performance
+        val configB = SDKLoggerConfig.Builder()
             .setMinLogLevel(LogLevel.INFO)
-            .addDestination(ConsoleDestination())
-            .addDestination(FileDestination(
-                logDirectory = File(context.getExternalFilesDir(null), "staging_logs"),
-                baseFileName = sdkName.lowercase(),
-                maxFileSize = 5 * 1024 * 1024L, // 5MB
-                maxFiles = 3
-            ))
-            .setAsync(true)
-            .setBufferSize(100)
-            .setFlushInterval(10000L)
+            .setBufferSize(500)
+            .setFlushInterval(30000L)
+            .setMetadataCollection(false)
+            .setStackTrace(false)
             .build()
             
-        return SDKLogger.getInstance(sdkName, version, config)
+        loggerA = SDKLogger.getInstance("ABTestA", "1.0.0", configA)
+        loggerB = SDKLogger.getInstance("ABTestB", "1.0.0", configB)
+        
+        experimentManager = ExperimentManager()
     }
     
-    private fun createProductionLogger(context: Context, sdkName: String, version: String): SDKLogger {
-        val config = SDKLoggerConfig.Builder()
-            .setEnabled(isLoggingEnabledForUser()) // Selective enablement
-            .setMinLogLevel(LogLevel.WARNING) // Only warnings and errors
-            .addDestination(ConsoleDestination())
-            .apply {
-                // File logging only for specific users or error scenarios
-                if (shouldEnableFileLogging()) {
-                    addDestination(createProductionFileDestination(context, sdkName))
-                }
-                
-                // Network logging for critical errors
-                if (shouldEnableNetworkLogging()) {
-                    addDestination(createNetworkDestination())
-                }
-            }
-            .addInterceptor(SensitiveDataInterceptor())
-            .addInterceptor(ProductionFilterInterceptor())
-            .setAsync(true)
-            .setBufferSize(50) // Smaller buffer for production
-            .setFlushInterval(30000L) // 30 seconds
-            .setMaxLogFileSize(3 * 1024 * 1024L) // 3MB
-            .setMaxLogFiles(2) // Keep only 2 files
-            .build()
-            
-        return SDKLogger.getInstance(sdkName, version, config)
-    }
-}
-```
-
-### Feature Flags Integration
-
-```kotlin
-class FeatureFlaggedLogger {
-    private val logger: SDKLogger
-    private val featureFlags: FeatureFlags
-    
-    init {
-        val config = SDKLoggerConfig.Builder()
-            .setEnabled(featureFlags.isEnabled("sdk_logging"))
-            .setMinLogLevel(
-                if (featureFlags.isEnabled("verbose_logging")) LogLevel.DEBUG 
-                else LogLevel.INFO
-            )
-            .addDestination(ConsoleDestination())
-            .apply {
-                if (featureFlags.isEnabled("file_logging")) {
-                    addDestination(createFileDestination())
-                }
-                if (featureFlags.isEnabled("analytics_logging")) {
-                    addDestination(createAnalyticsDestination())
-                }
-            }
-            .build()
-            
-        logger = SDKLogger.getInstance("FeatureFlaggedSDK", "1.0.0", config)
-    }
-    
-    fun updateFromFeatureFlags() {
-        // Update configuration when feature flags change
-        val newConfig = buildConfigFromFeatureFlags()
-        GlobalScope.launch {
-            logger.updateConfig(newConfig)
+    fun log(level: LogLevel, tag: String, message: String, metadata: Map<String, Any> = emptyMap()) {
+        val userId = metadata["userId"] as? String ?: "anonymous"
+        val variant = experimentManager.getVariant("logging_config", userId)
+        
+        val logger = when (variant) {
+            "A" -> loggerA
+            "B" -> loggerB
+            else -> loggerA // Default
+        }
+        
+        val enhancedMetadata = metadata + mapOf(
+            "abTestVariant" to variant,
+            "experimentId" to "logging_config"
+        )
+        
+        when (level) {
+            LogLevel.INFO -> logger.info(tag, message, metadata = enhancedMetadata)
+            LogLevel.WARNING -> logger.warning(tag, message, metadata = enhancedMetadata)
+            LogLevel.ERROR -> logger.error(tag, message, metadata = enhancedMetadata)
+            LogLevel.DEBUG -> logger.debug(tag, message, metadata = enhancedMetadata)
+            else -> logger.verbose(tag, message, metadata = enhancedMetadata)
         }
     }
 }
-```
 
-### Gradual Rollout Strategy
-
-```kotlin
-class GradualRolloutLogger {
-    companion object {
-        fun createWithRollout(
-            context: Context, 
-            userId: String, 
-            sdkName: String
-        ): SDKLogger {
-            val rolloutPercentage = getRolloutPercentage(sdkName)
-            val userHash = userId.hashCode().absoluteValue % 100
-            val isInRollout = userHash < rolloutPercentage
-            
-            val config = SDKLoggerConfig.Builder()
-                .setEnabled(isInRollout || BuildConfig.DEBUG)
-                .setMinLogLevel(if (isInRollout) LogLevel.INFO else LogLevel.ERROR)
-                .addDestination(ConsoleDestination())
-                .apply {
-                    if (isInRollout) {
-                        addDestination(createRolloutFileDestination(context, sdkName))
-                    }
-                }
-                .build()
-                
-            return SDKLogger.getInstance(sdkName, "1.0.0", config)
-        }
-        
-        private fun getRolloutPercentage(sdkName: String): Int {
-            // Get rollout percentage from remote config or feature flags
-            return when (sdkName) {
-                "PaymentSDK" -> 10  // 10% rollout
-                "AuthSDK" -> 25     // 25% rollout
-                else -> 5           // 5% default rollout
-            }
-        }
-    }
+interface ExperimentManager {
+    fun getVariant(experimentId: String, userId: String): String
 }
 ```
 
----
 
-## ⚡ Performance Optimization
 
-### High-Volume Logging
 
-```kotlin
-class HighVolumeLogger {
-    private val logger: SDKLogger
-    
-    init {
-        val config = SDKLoggerConfig.Builder()
-            .setAsync(true)
-            .setBufferSize(1000) // Large buffer
-            .setFlushInterval(60000L) // Flush every minute
-            .setMinLogLevel(LogLevel.INFO) // Skip debug/verbose
-            .addDestination(ConsoleDestination())
-            .addDestination(FileDestination(
-                logDirectory = getHighVolumeLogDirectory(),
-                maxFileSize = 50 * 1024 * 1024L, // 50MB files
-                maxFiles = 10,
-                formatter = JsonLogFormatter()
-            ))
-            .build()
-            
-        logger = SDKLogger.getInstance("HighVolumeSDK", "1.0.0", config)
-    }
-    
-    // Batch similar events
-    private val eventBatch = mutableListOf<Event>()
-    private val batchLock = Mutex()
-    
-    suspend fun logEventBatch(event: Event) = batchLock.withLock {
-        eventBatch.add(event)
-        
-        if (eventBatch.size >= 50) {
-            flushEventBatch()
-        }
-    }
-    
-    private suspend fun flushEventBatch() {
-        if (eventBatch.isEmpty()) return
-        
-        val batch = eventBatch.toList()
-        eventBatch.clear()
-        
-        logger.info("Events", "Batch processed",
-            metadata = mapOf(
-                "eventCount" to batch.size,
-                "eventTypes" to batch.groupingBy { it.type }.eachCount(),
-                "timespan" to (batch.last().timestamp - batch.first().timestamp)
-            ))
-    }
-}
-```
-
-### Memory-Efficient Logging
-
-```kotlin
-class MemoryEfficientLogger {
-    private val logger = SDKLogger.getInstance("MemorySDK", "1.0.0")
-    
-    // Limit metadata size
-    fun logWithSafeMetadata(tag: String, message: String, metadata: Map<String, Any>) {
-        val safeMetadata = metadata.entries
-            .take(MAX_METADATA_ENTRIES) // Limit number of entries
-            .associate { (key, value) ->
-                key to limitValueSize(value)
-            }
-        
-        logger.info(tag, message, metadata = safeMetadata)
-    }
-    
-    private fun limitValueSize(value: Any): Any {
-        return when (value) {
-            is String -> if (value.length > MAX_STRING_LENGTH) {
-                value.take(MAX_STRING_LENGTH) + "..."
-            } else value
-            
-            is Collection<*> -> if (value.size > MAX_COLLECTION_SIZE) {
-                value.take(MAX_COLLECTION_SIZE).toList() + listOf("... ${value.size - MAX_COLLECTION_SIZE} more")
-            } else value
-            
-            is ByteArray -> if (value.size > MAX_BYTE_ARRAY_SIZE) {
-                mapOf(
-                    "size" to value.size,
-                    "hash" to value.contentHashCode(),
-                    "preview" to value.take(10).toString()
-                )
-            } else value
-            
-            else -> value
-        }
-    }
-    
-    companion object {
-        private const val MAX_METADATA_ENTRIES = 20
-        private const val MAX_STRING_LENGTH = 500
-        private const val MAX_COLLECTION_SIZE = 10
-        private const val MAX_BYTE_ARRAY_SIZE = 1024
-    }
-}
-```
-
-### CPU-Optimized Logging
-
-```kotlin
-class CPUOptimizedLogger {
-    private val logger = SDKLogger.getInstance("CPUOptimizedSDK", "1.0.0")
-    
-    //
