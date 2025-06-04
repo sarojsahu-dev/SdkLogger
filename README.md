@@ -198,7 +198,4 @@ For detailed implementation guides and advanced features:
 
 - **[📱 Sample App](app/)** - Complete demo with all features
 
-## 🤝 Contributing
-
-We welcome contributions! See [Contributing Guide](CONTRIBUTING.md) for details.
 
