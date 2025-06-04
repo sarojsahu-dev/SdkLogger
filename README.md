@@ -190,12 +190,93 @@ For detailed implementation guides and advanced features:
 
 - **[📖 Complete Documentation](docs/README.md)** - Full API reference and examples
 - **[🎯 Best Practices](docs/BEST_PRACTICES.md)** - Production deployment guide
-- **[🔧 Advanced Configuration](docs/ADVANCED_CONFIG.md)** - Custom destinations and interceptors
-- **[📊 Analytics Guide](docs/ANALYTICS.md)** - Health monitoring and insights
-- **[🔍 Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 
 ## 💡 Examples
 
 - **[📱 Sample App](app/)** - Complete demo with all features
 
+## 🤝 Contributing
 
+We welcome contributions! Here's how you can help make SDKLogger better:
+
+### 🚀 Quick Start for Contributors
+
+1. **Fork** the repository
+2. **Clone** your fork: `git clone https://github.com/sarojsahu-dev/SdkLogger.git`
+3. **Create** a feature branch: `git checkout -b feature/amazing-feature`
+4. **Make** your changes
+5. **Test** thoroughly
+6. **Commit** with clear messages: `git commit -m 'Add amazing feature'`
+7. **Push** to your branch: `git push origin feature/amazing-feature`
+8. **Create** a Pull Request
+
+### 💡 How to Contribute
+
+- **🐛 Bug Reports** - Found a bug? [Open an issue](https://github.com/sarojsahu-dev/SdkLogger/issues)
+- **✨ Feature Requests** - Have an idea? [Start a discussion](https://github.com/sarojsahu-dev/SdkLogger/discussions)
+- **📖 Documentation** - Improve docs, add examples, fix typos
+- **🧪 Testing** - Add tests, improve coverage
+- **💻 Code** - Fix bugs, add features, optimize performance
+
+### 📋 Development Guidelines
+
+- Follow **Kotlin coding standards**
+- Add **tests** for new features
+- Update **documentation** for changes
+- Ensure **backward compatibility**
+- Keep **performance** in mind
+
+### 🏗️ Areas We Need Help
+
+- **Custom Destinations** (Database, Network, Cloud)
+- **Advanced Analytics** features
+- **Performance Optimizations**
+- **Documentation** improvements
+- **Example Projects** and tutorials
+
+---
+
+## 🗺️ Roadmap & Future Plans
+
+### 🔮 Upcoming Features
+
+#### **v0.1.0 - Enhanced Analytics** *(Next Release)*
+- 📊 **Real-time Dashboard** - Web-based logging dashboard
+- 📈 **Advanced Metrics** - Performance insights and trends
+- 🔔 **Smart Alerts** - Intelligent error detection
+- 📱 **Mobile Dashboard** - In-app log viewer
+
+#### **v0.2.0 - Cloud Integration**
+- ☁️ **Cloud Destinations** - Firebase, AWS CloudWatch, Azure
+- 🌐 **Remote Configuration** - Dynamic logging config
+- 🔄 **Log Streaming** - Real-time log streaming
+- 📤 **Bulk Upload** - Efficient cloud synchronization
+
+#### **v0.3.0 - Advanced Features**
+- 🤖 **AI-Powered Insights** - Automatic issue detection
+- 🔍 **Log Search & Query** - Powerful search capabilities
+- 📊 **Custom Visualizations** - Charts and graphs
+- 🎯 **Predictive Analytics** - Trend prediction
+
+### 💡 Future Innovations
+
+- **🌟 LogQL Support** - Query language for logs
+- **🔐 End-to-End Encryption** - Advanced security
+- **📱 Cross-Platform** - iOS and Flutter support
+- **🧩 Plugin Marketplace** - Community plugins
+- **📋 Compliance Tools** - GDPR, HIPAA automation
+
+### 🎯 Vision
+
+Create the **most comprehensive and developer-friendly logging solution** for mobile applications, with enterprise-grade features accessible to developers of all levels.
+
+---
+
+## 🌟 Community & Feedback
+
+Join our growing community of developers:
+
+- 💬 **[Discussions](https://github.com/sarojsahu-dev/SdkLogger/discussions)** - Ask questions, share ideas
+- 🐛 **[Issues](https://github.com/sarojsahu-dev/SdkLogger/issues)** - Report bugs, request features
+- 📧 **[Email](sarojsahu014@gmail.com)** - Direct feedback and suggestions
+- ⭐ **Star this repo** if SDKLogger helps your project!
