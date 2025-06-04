@@ -5,6 +5,7 @@ import com.logger.sdklogger.core.interfaces.LogFormatter
 import com.logger.sdklogger.core.interfaces.LogInterceptor
 import com.logger.sdklogger.core.models.LogLevel
 import com.logger.sdklogger.destinations.ConsoleDestination
+import com.logger.sdklogger.formatters.DefaultLogFormatter
 
 /**
  * Configuration class for SDKLogger

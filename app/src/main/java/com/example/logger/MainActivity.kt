@@ -11,18 +11,31 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import com.example.logger.demo.SDKLoggerScreen
 import com.example.logger.ui.theme.LoggerTheme
+import com.logger.sdklogger.core.SDKLogger
 
 class MainActivity : ComponentActivity() {
+
+    // Simple logger initialization
+    private val appLogger by lazy {
+        SDKLogger.getInstance("MyApp", "1.0.0")
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize logger
+        appLogger.info("App", "Application started successfully")
+
         enableEdgeToEdge()
         setContent {
             LoggerTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
+                    // Use your SDKLogger demo screen
+                    SDKLoggerScreen(
+                        modifier = Modifier.padding(innerPadding),
+                        logger = appLogger
                     )
                 }
             }
@@ -30,18 +43,3 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    LoggerTheme {
-        Greeting("Android")
-    }
-}
