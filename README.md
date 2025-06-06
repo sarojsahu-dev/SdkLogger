@@ -276,7 +276,6 @@ Create the **most comprehensive and developer-friendly logging solution** for mo
 
 Join our growing community of developers:
 
-- 💬 **[Discussions](https://github.com/sarojsahu-dev/SdkLogger/discussions)** - Ask questions, share ideas
 - 🐛 **[Issues](https://github.com/sarojsahu-dev/SdkLogger/issues)** - Report bugs, request features
 - 📧 **[Email](mailto:sarojsahu014@gmail.com)** - Direct feedback and suggestions
 - ⭐ **Star this repo** if SDKLogger helps your project!
