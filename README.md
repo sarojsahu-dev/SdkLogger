@@ -188,8 +188,9 @@ when {
 
 For detailed implementation guides and advanced features:
 
-- **[📖 Complete Documentation](docs/README.md)** - Full API reference and examples
-- **[🎯 Best Practices](docs/BEST_PRACTICES.md)** - Production deployment guide
+- [📘 Complete Tutorial](https://code2tutorial.com/tutorial/1c8c2e7c-dba6-4777-a119-74a4e1293fcb/index.md) – Step-by-step guide to get started  
+- [📖 API Documentation](docs/README.md) – Full API reference with usage examples  
+- [🎯 Best Practices](docs/BEST_PRACTICES.md) – Guidelines for production-ready deployment
 
 ## 💡 Examples
 
